@@ -1,9 +1,12 @@
 from music21 import converter, note, chord, stream
+import music21
 import numpy as np
 import fnmatch
 import os
 import scipy.io
+import subprocess
 
+music21.environment.UserSettings()['warnings'] = 0
 
 def m21_to_piano_roll(m21_stream, quantize_step=4):
     """
@@ -78,7 +81,7 @@ def piano_roll_to_m21(piano_roll, quantize_step=4):
     return m21_stream
 
 
-def get_filepaths(dirname='data', ext='krn'):
+def get_filepaths(dirname='humdrum-data', ext='krn'):
     matches = []
     for root, dirnames, filenames in os.walk(dirname):
         for filename in fnmatch.filter(filenames, '*.'+ext):
@@ -86,33 +89,40 @@ def get_filepaths(dirname='data', ext='krn'):
     print '\n', 'Found %d kern files.' % (len(matches),), '\n'
     return matches
 
+def delete_bad_files(dirname='humdrum-data', ext='krn'):
+    matches = []
+    for root, dirnames, filenames in os.walk(dirname):
+        for filename in fnmatch.filter(filenames, '*_exp_exp.'+ext):
+            os.remove(os.path.join(root, filename))
+            matches.append(filename)
+    print '\n', 'Found %d kern files.' % (len(matches),), '\n'
+    return matches
 
-def serialize_songs(data_dir='data/np_data', fname='all_data'):
-    """
-    Read a directory of .krn files and convert to piano roll representation.
-    Write results to a .npz file.
-
-    :param data_dir: location where the .npz file should be written.
-    :param fname: name of .npz file
-    :return:
-    """
-    if os.path.exists(os.path.join(data_dir, fname)):
-        os.remove(os.path.join(data_dir, fname))
-    songs = {}
-    for i, fp in enumerate(get_filepaths()):
-        print 'Processing file %d, %s' % (i+1, fp)
-        try:
-            m21_stream = converter.parse(fp, format='humdrum')
-        except Exception:
-            print 'Parse failed, skipping.'
-            continue
-        try:
-            pr = m21_to_piano_roll(m21_stream)
-        except Exception:
-            print 'Conversion to piano roll failed, skipping.'
-            continue
-        songs[fp] = pr
-    np.savez(os.path.join(data_dir, fname), **songs)
+def serialize_songs():
+    with open('filepaths.txt', 'w') as f:
+        for i, fp in enumerate(get_filepaths()):
+            print 'Processing file %d, %s' % (i+1, fp)
+            name_without_ext = fp.split('.')[0]
+            exp_fp = name_without_ext + '_exp.krn'
+            try:
+                with open(exp_fp, 'w') as exp_file:
+                    subprocess.check_call(['./thrux', fp], stdout=exp_file)
+            except Exception:
+                print 'Expand failed, skipping.'
+                continue
+            try:
+                m21_stream = converter.parse(exp_fp, format='humdrum')
+            except Exception:
+                print 'Parse failed, skipping.'
+                continue
+            try:
+                pr = m21_to_piano_roll(m21_stream)
+            except Exception:
+                print 'Conversion to piano roll failed, skipping.'
+                continue
+            np.save(name_without_ext, pr)
+            scipy.io.savemat(name_without_ext, mdict={'data': pr})
+            f.write(name_without_ext + '\n')
 
 
 def clean_filename(fname):
@@ -135,5 +145,5 @@ def write_matfile_from_npz(np_file='data/np_data/all_data.npz', matfile='data/ma
     scipy.io.savemat(matfile, mdict=data_dict)
 
 if __name__ == '__main__':
-    pass
+    serialize_songs()
 
