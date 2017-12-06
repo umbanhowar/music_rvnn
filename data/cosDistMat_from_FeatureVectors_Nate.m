@@ -33,7 +33,7 @@ FV_mat_hopped = zeros(n*h,ceil(k/h));
 % Check that the number of feature vectors divides nicely. Otherwise, pad
 % the end of the matrix with zeros. 
 if ceil(k/h) ~= k/h
-    pad = h*(ceil(k/h) - k/h);
+    pad = int32(h*(ceil(k/h) - k/h));
     M = [M,zeros(n,pad)];
 end
 

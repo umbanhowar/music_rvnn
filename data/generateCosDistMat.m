@@ -12,6 +12,7 @@ function [] = generateCosDistMat(task_id_string)
     zeros_mask = sum(piano_roll, 1) == 0;
     piano_roll(:, zeros_mask) = eps;
 
-    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(piano_roll, 1, 4);
-    dlmwrite(strcat(path, '_sim14full.txt'), sim);
+    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(piano_roll, 1, 6);
+    imagesc(sim < 0.1);
+    %dlmwrite(strcat(path, '_sim14full.txt'), sim);
 end

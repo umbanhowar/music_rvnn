@@ -7,5 +7,5 @@
 #
 
 /local/bin/matlab -nodisplay -nojvm -nosplash -nodesktop -r \
-      "try, generateCosDistMat('$SGE_TASK_ID'), catch e, fprintf(e.message), exit(1), end, exit(0);"
+      "try, generateCosDistMat_chroma('$SGE_TASK_ID'), catch e, fprintf(e.message), exit(1), end, exit(0);"
 echo "matlab exit code: $?"
