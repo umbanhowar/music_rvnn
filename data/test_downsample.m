@@ -1,43 +1,31 @@
-function [] = generateEssentialStructureComps(file_id_str)
+filepaths = importdata('filepaths.txt');
+
+num = ceil(rand * 1001)
+
+path = filepaths{num};
+
+% 190 is clear example
+path = filepaths{190};
+sim_mat_chroma = dlmread(strcat(path, '_sim14chroma.txt'));
+sim_mat_full = dlmread(strcat(path, '_sim14full.txt'));
+
+
+kernel = eye(4) * 1/4;
+blurred = imfilter(sim_mat_full, kernel, 'replicate');
+structure_mat = blurred < 0.25;
+
+imagesc(blurred);
+figure
+imagesc(structure_mat);
+
+
+
+
     addpath('KatieMATLABcode');
-    filepaths = importdata('filepaths.txt');
-    
-    % 908 interesting
-    path = filepaths{str2num(file_id_str)};
-    sim_mat_chroma = dlmread(strcat(path, '_sim1_12chroma.txt'));
-    sim_mat_full = dlmread(strcat(path, '_sim1_12full.txt'));
-
-%     % 10% threshold on chroma mats is 0.38
-%     mask = (sim_mat_chroma < 0.38);
-%     
-%     full_masked = mask .* sim_mat_full;
-%     flip_mask = -1 * (ones(size(mask)) - mask);
-%     
-%     fmc = flip_mask + full_masked;
-%     % 0.2 is 10% threshold on nonnegative values in chroma mats
-%     structure_mat = (fmc >= 0) & (fmc < 0.2);
-
-    structure_mat = (sim_mat_chroma < 0.1);
-    
-    figure
-    imagesc(sim_mat_full);
-    
-    figure
-    imagesc(sim_mat_chroma);
-    
-    figure
-    imagesc(structure_mat);
-    
-    figure
-    song = load(strcat(path, '.mat'));
-    piano_roll = song.data;
-    imagesc(flip(piano_roll, 1));
-    
-    
     sn = size(structure_mat, 1);
     TDDM = structure_mat .* ones(sn);
     
-    clear sim_mat_chroma sim_mat_full mask full_masked flip_mask fmc structure_mat
+    clear sim_mat_chroma sim_mat_full mask full_masked flip_mask fmc 
     
     % Extract all diagonals in TDDM, saving the pairs that the diagonals
     % represent
@@ -94,38 +82,42 @@ function [] = generateEssentialStructureComps(file_id_str)
     % Assign ONE new unique number to all the zero blocks - what is this
     % doing? 
     
-    % PNO_color_vec(one_vec == 1) = (num_colors + 1); 
+    PNO_color_vec(one_vec == 1) = (num_colors + 1); 
     
     % Assign unique ID's to nonstructural components
-    next_color = max(PNO_color_vec) + 1;
-    in_segment = false;
-    for ii=1:length(PNO_color_vec)
-        if PNO_color_vec(ii) == 0
-            if ~in_segment
-                in_segment = true;
-            end
-            PNO_color_vec(ii) = next_color;
-        else
-            if in_segment
-                in_segment = false;
-                next_color = next_color + 1;
-            end
-        end
-    end
+%     next_color = max(PNO_color_vec) + 1;
+%     in_segment = false;
+%     for ii=1:length(PNO_color_vec)
+%         if PNO_color_vec(ii) == 0
+%             if ~in_segment
+%                 in_segment = true;
+%             end
+%             PNO_color_vec(ii) = next_color;
+%         else
+%             if in_segment
+%                 in_segment = false;
+%                 next_color = next_color + 1;
+%             end
+%         end
+%     end
     
     song = load(strcat(path, '.mat'));
     piano_roll = song.data;
     figure
     subplot(2, 1, 1)
-    imagesc(flip(piano_roll, 1));
-    PNO_cv_sixteenth = repelem(PNO_color_vec, 12);
-    rng = (1:length(PNO_color_vec)) .* 12;
-    xticks(rng);
-    xticklabels(PNO_color_vec);
+    %imagesc(flip(piano_roll, 1));
+    imagesc(structure_mat);
+    
+    
+%     PNO_cv_sixteenth = repelem(PNO_color_vec, 12);
+%     rng = (1:length(PNO_color_vec)) .* 12;
+%     xticks(rng);
+%     xticklabels(PNO_color_vec);
+    
+    
     subplot(2, 1, 2)
     
     %imagesc(PNO_cv_sixteenth)
     imagesc(PNO_color_vec);
     
     colormap(jet(max(PNO_color_vec) + 1));
-%end

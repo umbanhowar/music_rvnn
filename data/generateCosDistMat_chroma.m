@@ -1,6 +1,5 @@
 function [] = generateCosDistMat_chroma(task_id_string)
     task_num = str2num(task_id_string);
-
     filepaths = importdata('filepaths.txt');
     %175 - bach chor001
     %900 - long one with artifacts
@@ -22,6 +21,6 @@ function [] = generateCosDistMat_chroma(task_id_string)
     zeros_mask = sum(reduced, 1) == 0;
     reduced(:, zeros_mask) = eps;
 
-    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(reduced, 1, 4);
-    dlmwrite(strcat(path, '_sim14chroma.txt'), sim);
+    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(reduced, 1, 12);
+    dlmwrite(strcat(path, '_sim1_12chroma.txt'), sim);
 end

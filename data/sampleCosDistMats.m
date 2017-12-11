@@ -7,7 +7,7 @@ all_samples = [];
 
 for i=1:num_mats_to_read
     i
-    sim_mat = dlmread(strcat(filepaths{indices(i)}, '_sim14chroma.txt'));
+    sim_mat = dlmread(strcat(filepaths{indices(i)}, '_sim1_12full.txt'));
     sz = size(sim_mat, 1);
     num_to_sample = 4*sz;
     samples = datasample(sim_mat(:), num_to_sample, 'Replace', false);
@@ -18,10 +18,10 @@ for i=1:num_mats_to_read
 end
 
 figure();
-h = histogram(all_samples);
+h = histogram(all_samples, 'Normalization', 'cdf');
 
-sorted = sort(all_samples(:));
-pct_thresh = 0.10;
+sorted = sort(all_samples);
+pct_thresh = 0.05;
 t_idx = round(pct_thresh * length(all_samples));
 thresh = sorted(t_idx)
 
