@@ -1,6 +1,7 @@
-data/humdrum_data
+data/humdrum-data
 venv/
 .DS_Store
+._.DS_Store
 .idea
 .ipynb_checkpoints
 data/felix-cache
