@@ -21,6 +21,6 @@ function [] = generateCosDistMat_chroma(task_id_string)
     zeros_mask = sum(reduced, 1) == 0;
     reduced(:, zeros_mask) = eps;
 
-    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(reduced, 1, 12);
-    dlmwrite(strcat(path, '_sim1_12chroma.txt'), sim);
+    [sim,matas] = cosDistMat_from_FeatureVectors_Nate(reduced, 12, 4);
+    dlmwrite(strcat(path, '_sim12_4chroma.txt'), sim);
 end

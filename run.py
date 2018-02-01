@@ -40,7 +40,7 @@ if __name__=='__main__':
 
         model.forward(batch_tensor, batch_ESC)
 
-        print model.loss
+	#print model.loss
 
         optimizer.zero_grad()
         model.backward()

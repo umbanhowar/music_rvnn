@@ -4,8 +4,7 @@ function [] = generateEssentialStructureComps(file_id_str)
     
     % 908 interesting
     path = filepaths{str2num(file_id_str)};
-    sim_mat_chroma = dlmread(strcat(path, '_sim1_12chroma.txt'));
-    sim_mat_full = dlmread(strcat(path, '_sim1_12full.txt'));
+    sim_mat_chroma = dlmread(strcat(path, '_sim12_4chroma.txt'));
 
 %     % 10% threshold on chroma mats is 0.38
 %     mask = (sim_mat_chroma < 0.38);
@@ -17,13 +16,13 @@ function [] = generateEssentialStructureComps(file_id_str)
 %     % 0.2 is 10% threshold on nonnegative values in chroma mats
 %     structure_mat = (fmc >= 0) & (fmc < 0.2);
 
-    structure_mat = (sim_mat_chroma < 0.1);
+    structure_mat = (sim_mat_chroma < 0.2);
     
-    figure
-    imagesc(sim_mat_full);
-    
-    figure
-    imagesc(sim_mat_chroma);
+%     figure
+%     imagesc(sim_mat_full);
+%     
+%     figure
+%     imagesc(sim_mat_chroma);
     
     figure
     imagesc(structure_mat);
@@ -97,35 +96,75 @@ function [] = generateEssentialStructureComps(file_id_str)
     % PNO_color_vec(one_vec == 1) = (num_colors + 1); 
     
     % Assign unique ID's to nonstructural components
-    next_color = max(PNO_color_vec) + 1;
-    in_segment = false;
-    for ii=1:length(PNO_color_vec)
-        if PNO_color_vec(ii) == 0
-            if ~in_segment
-                in_segment = true;
-            end
-            PNO_color_vec(ii) = next_color;
-        else
-            if in_segment
-                in_segment = false;
-                next_color = next_color + 1;
+%     next_color = max(PNO_color_vec) + 1;
+%     in_segment = false;
+%     for ii=1:length(PNO_color_vec)
+%         if PNO_color_vec(ii) == 0
+%             if ~in_segment
+%                 in_segment = true;
+%             end
+%             PNO_color_vec(ii) = next_color;
+%         else
+%             if in_segment
+%                 in_segment = false;
+%                 next_color = next_color + 1;
+%             end
+%         end
+%     end
+    
+%     song = load(strcat(path, '.mat'));
+%     piano_roll = song.data;
+%     figure
+%     subplot(2, 1, 1)
+%     imagesc(flip(piano_roll, 1));
+%     PNO_cv_sixteenth = repelem(PNO_color_vec, 12);
+%     rng = (1:length(PNO_color_vec)) .* 12;
+%     xticks(rng);
+%     xticklabels(PNO_color_vec);
+%     subplot(2, 1, 2)
+%     
+%     %imagesc(PNO_cv_sixteenth)
+%     imagesc(PNO_color_vec);
+
+    ESC = zeros(size(PNO_block, 2));
+    
+    for ii=1:size(PNO_block, 1)
+        ESC = ESC + ii * PNO_block(ii, :);
+    end
+
+    imagesc(PNO + PNO_block);
+    
+    
+    starts_marked = PNO + PNO_block;
+    for ii=1:size(starts_marked, 1)
+        row = starts_marked(ii, :);
+        for jj=2:size(starts_marked, 2)
+            % 2 2 - Both should be marked as ends (do nothing)
+            % 2 1 - First is a start, decrement
+            % 1 2 - First is an end, increment
+            % 1 1 - Last is an end if at end of song
+            % 2 0 - First is an end, do nothing
+            % 0 2 - Do nothing
+            % 1 0 - First is an end, increment
+            % 0 1 - Doesn't happen
+            % 0 0 - Do nothing
+            first = row(jj-1);
+            last = row(jj);
+            if first == 2 && last == 1
+                row(jj-1) = 1;
+            elseif first == 1 && last == 2
+                row(jj-1) = 2;
+            elseif first == 1 && last == 0
+                row(jj-1) = 2;
+            elseif first == 1 && last == 1
+                if jj == size(starts_marked, 2) 
+                    row(jj) = 2;
+                end
             end
         end
+        starts_marked(ii, :) = row;
     end
     
-    song = load(strcat(path, '.mat'));
-    piano_roll = song.data;
     figure
-    subplot(2, 1, 1)
-    imagesc(flip(piano_roll, 1));
-    PNO_cv_sixteenth = repelem(PNO_color_vec, 12);
-    rng = (1:length(PNO_color_vec)) .* 12;
-    xticks(rng);
-    xticklabels(PNO_color_vec);
-    subplot(2, 1, 2)
-    
-    %imagesc(PNO_cv_sixteenth)
-    imagesc(PNO_color_vec);
-    
-    colormap(jet(max(PNO_color_vec) + 1));
+    imagesc(starts_marked);
 %end

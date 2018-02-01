@@ -2,12 +2,14 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
+import pdb
 
 # HYPERPARAMETERS
 CODE_SIZE = 50
 EMBED_SIZE = 127
 CL_HIDDEN_SIZE = 50
 LD_HIDDEN_SIZE = 50
+MAX_ESC_LEN = 500 # This might need to be bigger
 
 dtype = torch.FloatTensor
 
@@ -23,12 +25,13 @@ class Model(nn.Module):
         # Node classifier
         self.cl0 = nn.Linear(CODE_SIZE, CL_HIDDEN_SIZE)
         self.cl1 = nn.Linear(CL_HIDDEN_SIZE, 2)
-        self.cl_cross_entropy = nn.CrossEntropyLoss(reduce=False)
+
 
         #Length decoder - should this be regression or classification?
         self.ld0 = nn.Linear(CODE_SIZE, LD_HIDDEN_SIZE)
-        self.ld1 = nn.Linear(LD_HIDDEN_SIZE, 1)
+        self.ld1 = nn.Linear(LD_HIDDEN_SIZE, MAX_ESC_LEN)
 
+        self.cross_entropy = nn.CrossEntropyLoss(reduce=False)
         self.relu = torch.nn.ReLU()
         self.loss = 0
 
@@ -155,7 +158,7 @@ class Model(nn.Module):
                 mask = Variable(torch.Tensor(mask), requires_grad=False)
                 mask = mask.view(len(batch))
 
-                losses = self.cl_cross_entropy(logits, labels)
+                losses = self.cross_entropy(logits, labels)
                 self.loss += torch.sum(torch.dot(losses, mask))
 
                 left, right = self.split(top)
@@ -178,6 +181,32 @@ class Model(nn.Module):
         else:
             pass
 
+    def decoder_rnn(self, batch_leaf_codes, batch_tensor, reset_hidden=False):
+        batch_tensor = Variable(batch_tensor, requires_grad=False)
+        # We want reverse ordering so that we can pop in the correct order
+        batch_leaf_codes = [list(reversed(x)) for x in batch_leaf_codes]
+        hnots = []
+        for b in range(len(batch_leaf_codes)):
+            hnots.append(batch_leaf_codes[b].pop())
+
+        pdb.set_trace()
+        hx = torch.cat(hnots, dim=0)
+
+        cx = Variable(torch.randn(batch_tensor.shape[1], CODE_SIZE), requires_grad=False)
+
+        ESC_vecs = [[] for b in range(batch_tensor.shape[1])]
+        for i in range(batch_tensor.shape[0]):
+            hx, cx = self.enc_lstm(batch_tensor[i], (hx, cx))
+            for b in range(hx.shape[0]):
+                # Iterate over the batch
+                if i in batch_ESC[b]:
+                    ESC_vecs[b].append(hx[b].view(1, -1))
+                    if reset_hidden:
+                        # TODO: should these have zero inits?
+                        hx = Variable(torch.randn(batch_tensor.shape[1], CODE_SIZE), requires_grad=False)
+                        cx = Variable(torch.randn(batch_tensor.shape[1], CODE_SIZE), requires_grad=False)
+        return ESC_vecs
+
     def transform_ESC_dict_to_lengths(self, batch_ESC):
         batch_ESC_lengths = []
         for b in range(len(batch_ESC)):
@@ -194,16 +223,13 @@ class Model(nn.Module):
     def transform_ESC_lengths_to_vec(self, ESC_lengths):
         lengths_flat = reduce(lambda x, y: x + y, ESC_lengths)
         lengths_flat = np.array(lengths_flat)
-        lengths_flat = Variable(torch.Tensor(lengths_flat).type(dtype), requires_grad=False)
+        # These are the labels. Note it might make sense to subtract 1?
+        lengths_flat = Variable(torch.Tensor(lengths_flat).type(torch.LongTensor), requires_grad=False)
         return lengths_flat
 
-    def decode_lengths(self, batch_reconstructed):
-        # Reverse the batch to get the natural ordering
-        batch_reconstructed = [reversed(x) for x in batch_reconstructed]
-        # Flatten
-        batch_reconstructed = [[x for sub in elt for x in sub] for elt in batch_reconstructed]
+    def decode_lengths(self, brnh):
         # Really flatten
-        batch_flat = reduce(lambda x, y: x + y, batch_reconstructed)
+        batch_flat = reduce(lambda x, y: x + y, brnh)
         batch_flat_tensor = torch.cat(batch_flat, dim=0)
         return self.length_decoder(batch_flat_tensor)
 
@@ -227,15 +253,28 @@ class Model(nn.Module):
         batch_decoding_padded = self.decoding_pad(hierarchies)
 
         latent_codes = self.encode(batch_encoding_padded, lengths)
+        # Note that the ordering of each grouping is reversed here
         batch_reconstructed = self.decode(latent_codes, batch=batch_decoding_padded, lengths=lengths)
+
+        # Build batch reconstructed, no hierarchy
+        brnh = [reversed(x) for x in batch_reconstructed]
+        # Some black magic, all its doing is turning [[[AB][C]]] into [[ABC]]
+        brnh = [[x for sub in elt for x in sub] for elt in brnh]
 
         # Find the lengths of each essential structure component
         # TODO: use this representation in the beginning anyway?
         ESC_lengths = self.transform_ESC_dict_to_lengths(batch_ESC)
         ESC_lengths_vec = self.transform_ESC_lengths_to_vec(ESC_lengths)
-        decoded_lengths = self.decode_lengths(batch_reconstructed)
-        print ESC_lengths_vec, decoded_lengths
-        self.loss += torch.sum(torch.sqrt((ESC_lengths_vec - decoded_lengths) ** 2))
+        decoded_length_logits = self.decode_lengths(brnh)
+
+        # For testing
+        length_softmax = nn.functional.softmax(decoded_length_logits, dim=1)
+        vals, indices = torch.max(length_softmax, dim=1)
+
+        self.loss += torch.sum(self.cross_entropy(decoded_length_logits, ESC_lengths_vec))
+
+        # Now run the decoder rnn and train using teacher-forcing
+        self.decoder_rnn(brnh, batch_tensor)
 
     def backward(self):
         self.loss.backward()
