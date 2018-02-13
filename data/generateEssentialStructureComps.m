@@ -1,37 +1,38 @@
 function [] = generateEssentialStructureComps(file_id_str)
+    write = true;
+    filetype = '6_4chroma';
+    thresh = 0.1;
+
     addpath('KatieMATLABcode');
     filepaths = importdata('filepaths.txt');
     
     % 908 interesting
     path = filepaths{str2num(file_id_str)};
-    sim_mat_chroma = dlmread(strcat(path, '_sim12_4chroma.txt'));
+    sim_mat = dlmread(strcat(path, '_sim', filetype, '.txt'));
 
-%     % 10% threshold on chroma mats is 0.38
-%     mask = (sim_mat_chroma < 0.38);
-%     
-%     full_masked = mask .* sim_mat_full;
-%     flip_mask = -1 * (ones(size(mask)) - mask);
-%     
-%     fmc = flip_mask + full_masked;
-%     % 0.2 is 10% threshold on nonnegative values in chroma mats
-%     structure_mat = (fmc >= 0) & (fmc < 0.2);
-
-    structure_mat = (sim_mat_chroma < 0.2);
+    structure_mat = (sim_mat < thresh);
     
-%     figure
-%     imagesc(sim_mat_full);
-%     
-%     figure
-%     imagesc(sim_mat_chroma);
+    % If no essential structure components, just write right away
+    if structure_mat == eye(size(sim_mat, 1))
+        if write
+            write_ESC([size(sim_mat, 1) 1], path, filetype, num2str(thresh));
+        end
+        return
+    end
     
-    figure
-    imagesc(structure_mat);
+    if ~write
+        figure
+        imagesc(sim_mat);
+        figure
+        imagesc(structure_mat);
+    end
     
-    figure
-    song = load(strcat(path, '.mat'));
-    piano_roll = song.data;
-    imagesc(flip(piano_roll, 1));
-    
+    if ~write
+        figure
+        song = load(strcat(path, '.mat'));
+        piano_roll = song.data;
+        imagesc(flip(piano_roll, 1));
+    end
     
     sn = size(structure_mat, 1);
     TDDM = structure_mat .* ones(sn);
@@ -89,53 +90,17 @@ function [] = generateEssentialStructureComps(file_id_str)
     elseif PNO_block_vec(1) == 1 % There is a block at time step 1
         one_vec = [0,one_vec];
     end
-
-    % Assign ONE new unique number to all the zero blocks - what is this
-    % doing? 
-    
-    % PNO_color_vec(one_vec == 1) = (num_colors + 1); 
-    
-    % Assign unique ID's to nonstructural components
-%     next_color = max(PNO_color_vec) + 1;
-%     in_segment = false;
-%     for ii=1:length(PNO_color_vec)
-%         if PNO_color_vec(ii) == 0
-%             if ~in_segment
-%                 in_segment = true;
-%             end
-%             PNO_color_vec(ii) = next_color;
-%         else
-%             if in_segment
-%                 in_segment = false;
-%                 next_color = next_color + 1;
-%             end
-%         end
-%     end
-    
-%     song = load(strcat(path, '.mat'));
-%     piano_roll = song.data;
-%     figure
-%     subplot(2, 1, 1)
-%     imagesc(flip(piano_roll, 1));
-%     PNO_cv_sixteenth = repelem(PNO_color_vec, 12);
-%     rng = (1:length(PNO_color_vec)) .* 12;
-%     xticks(rng);
-%     xticklabels(PNO_color_vec);
-%     subplot(2, 1, 2)
-%     
-%     %imagesc(PNO_cv_sixteenth)
-%     imagesc(PNO_color_vec);
-
-    ESC = zeros(size(PNO_block, 2));
-    
-    for ii=1:size(PNO_block, 1)
-        ESC = ESC + ii * PNO_block(ii, :);
-    end
-
-    imagesc(PNO + PNO_block);
     
     
     starts_marked = PNO + PNO_block;
+    
+    if ~write
+        figure
+        imagesc(starts_marked);
+    end    
+    
+    % Convert the ESC representation with their starts marked to one with
+    % their ends marked.
     for ii=1:size(starts_marked, 1)
         row = starts_marked(ii, :);
         for jj=2:size(starts_marked, 2)
@@ -156,15 +121,61 @@ function [] = generateEssentialStructureComps(file_id_str)
                 row(jj-1) = 2;
             elseif first == 1 && last == 0
                 row(jj-1) = 2;
-            elseif first == 1 && last == 1
-                if jj == size(starts_marked, 2) 
-                    row(jj) = 2;
-                end
+            end
+            if jj == size(starts_marked, 2) && row(jj) ~= 0
+                row(jj) = 2;
             end
         end
         starts_marked(ii, :) = row;
     end
+    ends_marked = starts_marked;
     
-    figure
-    imagesc(starts_marked);
+    % Assign a unique ID to each nonstructural components and mark their end
+    % times.
+    in_block = false;
+    new_row = zeros(1, size(ends_marked, 2));
+    for ii=1:size(ends_marked, 2)
+        % If you get a column of all zeros
+        if ~any(ends_marked(:, ii))
+            if ~in_block
+                in_block = true;
+            end
+            % If we're at the last position, mark the end.
+            if ii == size(ends_marked, 2)
+                new_row(ii) = 2;
+                ends_marked = [ends_marked; new_row];
+            else
+                % Otherwise mark that we're in the component.
+                new_row(ii) = 1;
+            end
+        else
+            if in_block
+                in_block = false;
+                new_row(ii-1) = 2;
+                ends_marked = [ends_marked; new_row];
+                new_row = zeros(1, size(ends_marked, 2));
+            end
+        end
+    end
+    
+    if ~write
+        figure
+        imagesc(ends_marked);
+        figure
+        imagesc(sum(ends_marked, 1));
+    end
+    
+    % Convert to correct representation format and write to file.
+    ESC = [];
+    for ii=1:size(ends_marked, 2)
+        for jj=1:size(ends_marked, 1)
+            if ends_marked(jj, ii) == 2
+                ESC = [ESC; [ii jj]];
+            end
+        end
+    end
+    
+    if write
+        write_ESC(ESC, path, filetype, num2str(thresh));
+    end
 %end

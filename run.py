@@ -7,13 +7,21 @@ import torch.nn as nn
 
 import pdb
 
+import data.data_utils
+
 
 def read_ESC(fname):
+    """
+    From a filename, create a dict mapping ESC end times to ESC IDs.
+    """
     with open(fname + '_ESC') as f:
         lines = f.readlines()
         return dict([[int(num) for num in line.strip().split(',')] for line in lines])
 
 def batch_raw_to_tensor(batch_raw):
+    """
+    Create a pytorch tensor of a batch of songs to enable RNN processing.
+    """
     # We want to create a pytorch tensor having dimensions (time, batch, feature)
     # Max song length
     max_len = max([pr.shape[1] for pr in batch_raw])
@@ -31,17 +39,34 @@ if __name__=='__main__':
     model = Model()
     learning_rate = 1e-3
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    for i in xrange(10000):
-        batch_names = ['chor245', 'prelude67-14']
+
+    lc = None
+    for i in xrange(1000):
+        print i
+        batch_names = ['chor245', 'prelude67-14', 'chor245copy']
         batch_raw = [np.load(x + '.npy') for x in batch_names]
+        batch_lengths = np.array([x.shape[1] for x in batch_raw])
         # Get a mapping of ESC end times (inclusive) to ESC IDs
         batch_ESC = [read_ESC(x) for x in batch_names]
         batch_tensor = batch_raw_to_tensor(batch_raw)
 
-        model.forward(batch_tensor, batch_ESC)
+        lc = model.forward(batch_tensor, batch_lengths, batch_ESC)
 
-	#print model.loss
+        print model.loss
 
         optimizer.zero_grad()
         model.backward()
         optimizer.step()
+    res = model.fake_generate(lc)
+
+    pdb.set_trace()
+
+    song1 = res[:112, 1, :].T
+    song1_orig = batch_raw[1][:, :112]
+
+    np.savetxt('song1_gen', song1.astype(int), fmt="%i", delimiter=" ")
+    np.savetxt('song1_orig', song1_orig.astype(int), fmt="%i", delimiter=" ")
+
+
+
+
