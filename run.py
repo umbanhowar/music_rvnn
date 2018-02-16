@@ -37,12 +37,11 @@ def batch_raw_to_tensor(batch_raw):
 
 if __name__=='__main__':
     model = Model()
-    learning_rate = 1e-3
+    learning_rate = 1e-2
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     lc = None
-    for i in xrange(1000):
-        print i
+    for i in xrange(2500):
         batch_names = ['chor245', 'prelude67-14', 'chor245copy']
         batch_raw = [np.load(x + '.npy') for x in batch_names]
         batch_lengths = np.array([x.shape[1] for x in batch_raw])
@@ -52,7 +51,8 @@ if __name__=='__main__':
 
         lc = model.forward(batch_tensor, batch_lengths, batch_ESC)
 
-        print model.loss
+        if i%10 == 0:
+            print i, model.loss, model.rec_loss
 
         optimizer.zero_grad()
         model.backward()

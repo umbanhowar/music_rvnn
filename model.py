@@ -6,7 +6,7 @@ import pdb
 import random
 
 # HYPERPARAMETERS
-CODE_SIZE = 200
+CODE_SIZE = 300
 CL_HIDDEN_SIZE = 50
 LD_HIDDEN_SIZE = 50
 ENC_EMBED_SIZE = 150
@@ -50,6 +50,8 @@ class Model(nn.Module):
         self.relu = torch.nn.ReLU()
         # Model batch loss - will be dynamically constructed.
         self.loss = 0
+
+        self.rec_loss = 0
 
     def encoding_pad(self, hierarchies):
         max_len = max([len(x) for x in hierarchies])
@@ -329,6 +331,7 @@ class Model(nn.Module):
                 mask = np.repeat(mask, 128)
                 mask = Variable(torch.Tensor(mask), requires_grad=False)
                 self.loss += torch.sum(self.cross_entropy(note_output_logits, labels) * mask)
+                self.rec_loss += torch.sum(self.cross_entropy(note_output_logits, labels) * mask)
 
                 # If we're not at the end of an ESC, we just want to update
                 # the piano roll input to be the note that we just tried to
@@ -354,7 +357,7 @@ class Model(nn.Module):
                         # Also, reset the piano roll input to zero, as we want to
                         # predict the note at the next timestep given the new ESC
                         # code.
-                        ipt_from_piano_roll[b] = Variable(torch.zeros(1, DEC_EMBED_SIZE).type(dtype), requires_grad=False)
+                        # ipt_from_piano_roll[b] = Variable(torch.zeros(1, DEC_EMBED_SIZE).type(dtype), requires_grad=False)
         else:
             # generation mode
             outputs = []
@@ -370,7 +373,6 @@ class Model(nn.Module):
 
             ipt_from_piano_roll = Variable(torch.zeros(len(batch_leaf_codes), DEC_EMBED_SIZE).type(dtype), requires_grad=False)
 
-            # Wrong
             for i in range(max(batch_lengths)):
                 curr_ESC_ipt = torch.cat(curr_ESC, dim=0)
                 ipt = torch.cat([ipt_from_piano_roll, curr_ESC_ipt], dim=1)
@@ -470,7 +472,7 @@ class Model(nn.Module):
 
                     num_open_left_parens -= 1
                 else:
-                    curr_group.append()
+                    #curr_group.append()
                     curr_group = []
                     num_open_left_parens += 1
 
@@ -487,6 +489,7 @@ class Model(nn.Module):
         # Reset the loss to zero for each batch, as it will be dynamically
         # constructed.
         self.loss = 0
+        self.rec_loss = 0
 
         ESC_vecs = self.encoder_rnn(batch_tensor, batch_ESC)
 
@@ -505,7 +508,7 @@ class Model(nn.Module):
         hierarchies[2].append([ESC_vecs[2][0]])
         lengths = np.array([[2],[3],[0]])
         ########################################
-        hierarchies = self.random_hierarchy(ESC_vecs)
+        #hierarchies = self.random_hierarchy(ESC_vecs)
 
         # [D][][ABC] so we can pop from the ends.
         # [][F][DE]
@@ -569,7 +572,6 @@ class Model(nn.Module):
     def fake_generate(self, leaf_codes):
         pdb.set_trace()
 
-        # TEMP: how to do this for generation?
         decoded_len_logits = self.decode_lengths(leaf_codes)
         length_softmax = nn.functional.softmax(decoded_len_logits, dim=1)
         vals, indices = torch.max(length_softmax, dim=1)
