@@ -5,10 +5,14 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 
+import sys
+
 import pdb
 
 import data.data_utils
 
+#dtype = torch.FloatTensor
+dtype = torch.cuda.FloatTensor
 
 def read_ESC(fname):
     """
@@ -33,39 +37,46 @@ def batch_raw_to_tensor(batch_raw):
     batch_ndarray = np.stack(batch_raw, axis=0)
     # Transpose to desired axis ordering
     batch_ndarray = np.transpose(batch_ndarray, (2, 0, 1))
-    return torch.Tensor(batch_ndarray)
+    return torch.Tensor(batch_ndarray).type(dtype)
 
 if __name__=='__main__':
     model = Model()
-    learning_rate = 1e-2
+
+    model.cuda()
+
+    learning_rate = 3e-4
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    save_path = 'ckpt/model/model.pt'
+    mode = sys.argv[1]
 
-    lc = None
-    for i in xrange(2500):
-        batch_names = ['chor245', 'prelude67-14', 'chor245copy']
-        batch_raw = [np.load(x + '.npy') for x in batch_names]
-        batch_lengths = np.array([x.shape[1] for x in batch_raw])
-        # Get a mapping of ESC end times (inclusive) to ESC IDs
-        batch_ESC = [read_ESC(x) for x in batch_names]
-        batch_tensor = batch_raw_to_tensor(batch_raw)
+    #model.load_state_dict(torch.load(save_path))
+    if mode == 'train':
+        lc = None
+        try:
+            for i in xrange(2500):
+                batch_names = ['chor245', 'prelude67-14', 'chor245copy']
+                batch_raw = [np.load(x + '.npy') for x in batch_names]
+                batch_lengths = np.array([x.shape[1] for x in batch_raw])
+                # Get a mapping of ESC end times (inclusive) to ESC IDs
+                batch_ESC = [read_ESC(x) for x in batch_names]
+                batch_tensor = batch_raw_to_tensor(batch_raw)
 
-        lc = model.forward(batch_tensor, batch_lengths, batch_ESC)
+                lc = model.forward(batch_tensor, batch_lengths, batch_ESC)
 
-        if i%10 == 0:
-            print i, model.loss, model.rec_loss
+                #if i%10 == 0:
+                print i, model.loss, model.rec_loss
 
-        optimizer.zero_grad()
-        model.backward()
-        optimizer.step()
-    res = model.fake_generate(lc)
-
-    pdb.set_trace()
-
-    song1 = res[:112, 1, :].T
-    song1_orig = batch_raw[1][:, :112]
-
-    np.savetxt('song1_gen', song1.astype(int), fmt="%i", delimiter=" ")
-    np.savetxt('song1_orig', song1_orig.astype(int), fmt="%i", delimiter=" ")
+                optimizer.zero_grad()
+                model.backward()
+                optimizer.step()
+        except KeyboardInterrupt:
+            torch.save(model.state_dict(), save_path)
+        torch.save(model.state_dict(), save_path)
+    elif mode == 'gen':
+        res = model.generate(1)
+        VAE_out0 = res[:, 0, :].T
+        np.savetxt('VAE_out0', VAE_out0.astype(int), fmt="%i", delimiter=" ")
+        pdb.set_trace()
 
 
 

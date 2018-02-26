@@ -9,11 +9,15 @@ import random
 CODE_SIZE = 300
 CL_HIDDEN_SIZE = 50
 LD_HIDDEN_SIZE = 50
+VAE_HIDDEN_SIZE = 200
 ENC_EMBED_SIZE = 150
 DEC_EMBED_SIZE = 150
 MAX_ESC_LEN = 500 # This might need to be bigger
 
-dtype = torch.FloatTensor
+#dtype = torch.FloatTensor
+dtype = torch.cuda.FloatTensor
+#ldtype = torch.LongTensor
+ldtype = torch.cuda.LongTensor
 
 class Model(nn.Module):
     def __init__(self):
@@ -43,6 +47,15 @@ class Model(nn.Module):
         #Length decoder - should this be regression or classification?
         self.ld0 = nn.Linear(CODE_SIZE, LD_HIDDEN_SIZE)
         self.ld1 = nn.Linear(LD_HIDDEN_SIZE, MAX_ESC_LEN)
+
+        # VAE mean and stddev layers
+        self.VAEmean0 = nn.Linear(CODE_SIZE, VAE_HIDDEN_SIZE)
+        self.VAEmean1 = nn.Linear(VAE_HIDDEN_SIZE, CODE_SIZE)
+        self.VAEstd0 = nn.Linear(CODE_SIZE, VAE_HIDDEN_SIZE)
+        self.VAEstd1 = nn.Linear(VAE_HIDDEN_SIZE, CODE_SIZE)
+
+        # Softplus for constraining stddev to be positive
+        self.softplus = nn.Softplus()
 
         # Shared utility functions.
         self.cross_entropy = nn.CrossEntropyLoss(reduce=False)
@@ -202,11 +215,11 @@ class Model(nn.Module):
                 # everything else as zero.
                 # We want to mask out anything where we have already done one zero mask
                 labels = (i < (lengths - 1)).astype(int)
-                labels = Variable(torch.Tensor(labels).type(torch.LongTensor), requires_grad=False)
+                labels = Variable(torch.Tensor(labels).type(ldtype), requires_grad=False)
                 labels = labels.view(len(batch))
 
                 mask = (i < lengths).astype(int)
-                mask = Variable(torch.Tensor(mask), requires_grad=False)
+                mask = Variable(torch.Tensor(mask).type(dtype), requires_grad=False)
                 mask = mask.view(len(batch))
 
                 losses = self.cross_entropy(logits, labels)
@@ -233,7 +246,7 @@ class Model(nn.Module):
             is_done = [False for _ in range(len(latent_codes))]
             bufs = [[] for _ in range(len(latent_codes))]
             ctr = 0
-            while not all(is_done) and ctr < 10:
+            while not all(is_done) and ctr < 10000:
                 tops = []
                 for b in range(len(latent_codes)):
                     try:
@@ -317,7 +330,7 @@ class Model(nn.Module):
                 note_output_logits = note_output_logits.view(-1, 3)
 
                 # Labels for the corresponding logits.
-                labels = batch_tensor[i].contiguous().view(-1).type(torch.LongTensor)
+                labels = batch_tensor[i].contiguous().view(-1).type(ldtype)
 
                 # Now create a mask to mask out the sequences that are already
                 # done in the loss function. There are 128 sets of logits for each
@@ -329,7 +342,7 @@ class Model(nn.Module):
                 # But if i=2, then we want to mask it out. Hence:
                 mask = (i < batch_lengths).astype(int)
                 mask = np.repeat(mask, 128)
-                mask = Variable(torch.Tensor(mask), requires_grad=False)
+                mask = Variable(torch.Tensor(mask).type(dtype), requires_grad=False)
                 self.loss += torch.sum(self.cross_entropy(note_output_logits, labels) * mask)
                 self.rec_loss += torch.sum(self.cross_entropy(note_output_logits, labels) * mask)
 
@@ -374,6 +387,7 @@ class Model(nn.Module):
             ipt_from_piano_roll = Variable(torch.zeros(len(batch_leaf_codes), DEC_EMBED_SIZE).type(dtype), requires_grad=False)
 
             for i in range(max(batch_lengths)):
+                #print i
                 curr_ESC_ipt = torch.cat(curr_ESC, dim=0)
                 ipt = torch.cat([ipt_from_piano_roll, curr_ESC_ipt], dim=1)
 
@@ -389,7 +403,7 @@ class Model(nn.Module):
                 note_output_probs = nn.functional.softmax(note_output_logits, dim=-1)
 
                 # Sample output for this time step. (go back to numpy land for a little)
-                note_output_probs = note_output_probs.data.numpy()
+                note_output_probs = note_output_probs.data.cpu().numpy()
 
                 samples = np.zeros((len(batch_leaf_codes), 128))
                 for b in range(len(batch_leaf_codes)):
@@ -401,7 +415,7 @@ class Model(nn.Module):
                 outputs.append(samples)
 
                 # Use this output as the next piano roll input
-                back_to_pytorch = Variable(torch.Tensor(samples), requires_grad=False)
+                back_to_pytorch = Variable(torch.Tensor(samples).type(dtype), requires_grad=False)
                 ipt_from_piano_roll = self.dec_embedding(back_to_pytorch)
 
                 # Then conditionally replace the piano roll input with zeros for
@@ -425,7 +439,6 @@ class Model(nn.Module):
                         # code. TODO: should we do this or no?
                         ipt_from_piano_roll[b] = Variable(torch.zeros(1, DEC_EMBED_SIZE).type(dtype), requires_grad=False)
 
-            pdb.set_trace()
             return np.stack(outputs, axis=0)
 
 
@@ -446,7 +459,7 @@ class Model(nn.Module):
         lengths_flat = reduce(lambda x, y: x + y, ESC_lengths)
         lengths_flat = np.array(lengths_flat)
         # These are the labels.
-        lengths_flat = Variable(torch.Tensor(lengths_flat).type(torch.LongTensor), requires_grad=False)
+        lengths_flat = Variable(torch.Tensor(lengths_flat).type(ldtype), requires_grad=False)
         return lengths_flat
 
     def decode_lengths(self, leaf_codes):
@@ -456,34 +469,55 @@ class Model(nn.Module):
         return self.length_decoder(batch_flat_tensor)
 
     def random_hierarchy(self, ESC_vecs):
-        hierarchies = [None for _ in ESC_vecs]
+        # Reverse so we can pop to shift
+        ESC_vecs = [list(reversed(x)) for x in ESC_vecs]
+        hierarchies = [[] for _ in ESC_vecs]
+        lengths = np.zeros((len(ESC_vecs), 1))
         for b in range(len(ESC_vecs)):
-            symbols_to_generate = 2 * len(ESC_vecs[b])
-            symbols_remaining = symbols_to_generate
-            num_open_left_parens = 0
-            curr_group = []
-            hierarchy = []
-            for t in range(symbols_to_generate):
-                num = num_open_left_parens * (symbols_remaining + num_open_left_parens + 2)
-                denom = (2 * symbols_remaining) * (num_open_left_parens + 1)
-                prob_right_paren = float(num) / denom
-                if random.random() < prob_right_paren:
-                    hierarchy.append(list(curr_group))
+            if len(ESC_vecs[b]) == 1:
+                # Handle no structure case
+                hierarchies[b].append([ESC_vecs[b].pop()])
+                lengths[b] = 0
+            else:
+                num_transitions = 2 * len(ESC_vecs[b]) - 1
+                stack_size = 0
+                curr_group = []
+                for i in range(num_transitions):
+                    q_size = len(ESC_vecs[b])
+                    if stack_size < 2:
+                        # Must shift
+                        curr_group.append(ESC_vecs[b].pop())
+                        stack_size += 1
+                    elif q_size == 0:
+                        # Must reduce
+                        hierarchies[b].append(list(curr_group))
+                        stack_size -= 1
+                        curr_group = []
+                    else:
+                        # Otherwise we randomly choose
+                        if random.random() < 0.5:
+                            # shift
+                            curr_group.append(ESC_vecs[b].pop())
+                            stack_size += 1
+                        else:
+                            # reduce
+                            hierarchies[b].append(list(curr_group))
+                            stack_size -= 1
+                            curr_group = []
+                lengths[b] = len(hierarchies[b])
+        return (lengths, hierarchies)
 
-                    num_open_left_parens -= 1
-                else:
-                    #curr_group.append()
-                    curr_group = []
-                    num_open_left_parens += 1
+    def VAE(self, root_codes):
+        mean = self.VAEmean0(root_codes)
+        mean = self.relu(mean)
+        mean = self.VAEmean1(mean)
 
-                symbols_remaining -= 1
-
-        #TODO: this is not at all done
-
-
-        pdb.set_trace()
-
-
+        std = self.VAEstd0(root_codes)
+        std = self.relu(std)
+        std = self.VAEstd1(std)
+        # Standard deviations must be positive
+        std = self.softplus(std)
+        return (mean, std)
 
     def forward(self, batch_tensor, batch_lengths, batch_ESC):
         # Reset the loss to zero for each batch, as it will be dynamically
@@ -497,18 +531,7 @@ class Model(nn.Module):
         # batch, having ESC vectors ABCD and DEF. Then one possible hierarchy
         # is [ABC][][D]
         #    [DE][F][] where the last empty list is padding.
-        ########################################
-        # This part will be solved by random hierarchy
-        hierarchies = [[], [], []]
-        hierarchies[0].append(ESC_vecs[0][:2])
-        hierarchies[0].append([ESC_vecs[0][2]])
-        hierarchies[1].append(ESC_vecs[1][:3])
-        hierarchies[1].append([])
-        hierarchies[1].append([ESC_vecs[1][3]])
-        hierarchies[2].append([ESC_vecs[2][0]])
-        lengths = np.array([[2],[3],[0]])
-        ########################################
-        #hierarchies = self.random_hierarchy(ESC_vecs)
+        lengths, hierarchies = self.random_hierarchy(ESC_vecs)
 
         # [D][][ABC] so we can pop from the ends.
         # [][F][DE]
@@ -517,44 +540,35 @@ class Model(nn.Module):
         # [] [DE][F]
         batch_decoding_padded = self.decoding_pad(hierarchies)
 
-        latent_codes = self.encoder_rvnn(batch_encoding_padded, lengths)
+        # list of tensors
+        root_codes = self.encoder_rvnn(batch_encoding_padded, lengths)
+        # tensor
+        root_codes_tensor = torch.cat(root_codes, dim=0)
+
+        z_mean, z_stddev = self.VAE(root_codes_tensor)
+        latent_loss = 0.5 * torch.sum(z_mean ** 2 + z_stddev ** 2 - torch.log(z_stddev) - 1)
+        self.loss += latent_loss
+
+        samples = torch.normal(torch.zeros(z_mean.shape).type(dtype), torch.ones(z_mean.shape).type(dtype))
+        samples = Variable(samples, requires_grad=False)
+        sampled_root_codes = z_mean + z_stddev * samples
+        sampled_root_codes_list = torch.chunk(sampled_root_codes, sampled_root_codes.shape[0], dim=0)
 
         # Get the decoded leaf codes, in reverse order
-        # I.E. [D][][ABC]
-        leaf_codes_reversed = self.decoder_rvnn(latent_codes, batch=batch_decoding_padded, lengths=lengths)
-        #batch_reconstructed = self.decoder_rvnn(latent_codes)
-
+        # I.E. [[DCBA]]
+        leaf_codes_reversed = self.decoder_rvnn(sampled_root_codes_list, batch=batch_decoding_padded, lengths=lengths)
         leaf_codes = [list(reversed(x)) for x in leaf_codes_reversed]
+        # At this step, we are left with leaf_codes = [[ABCD]]
 
         # TODO(TEMP): delete later
         lc = list(leaf_codes)
 
-        # At this step, we are left with leaf_codes = [[ABCD]]
+
 
         # Find the lengths of each essential structure component
         ESC_lengths = self.transform_ESC_dict_to_lengths(batch_ESC)
         ESC_lengths_vec = self.transform_ESC_lengths_to_vec(ESC_lengths)
         decoded_length_logits = self.decode_lengths(leaf_codes)
-
-        # For testing
-        length_softmax = nn.functional.softmax(decoded_length_logits, dim=1)
-        vals, indices = torch.max(length_softmax, dim=1)
-
-        # TEMP: how to do this for generation?
-        decoded_len_logits = self.decode_lengths(leaf_codes)
-        length_softmax = nn.functional.softmax(decoded_length_logits, dim=1)
-        vals, indices = torch.max(length_softmax, dim=1)
-        num_esc_by_batch = [len(x) for x in leaf_codes]
-        esc_lengths_organized = []
-        start = 0
-        for n in num_esc_by_batch:
-            esc_lengths_organized.append(indices[start:start+n].data.numpy())
-            start = start + n
-
-        # analogous to the thing i called batch_ESC
-        esc_ends = [set(np.cumsum(elt) - 1) for elt in esc_lengths_organized]
-        time_lengths = np.array([np.sum(x) for x in esc_lengths_organized])
-        # now build the array of lengths from this
 
         #pdb.set_trace()
 
@@ -568,6 +582,29 @@ class Model(nn.Module):
         #self.decoder_rnn(leaf_codes, _lengths, batch_ESC)
 
         return lc
+
+    def generate(self, num):
+        samples = torch.normal(torch.zeros(num, CODE_SIZE).type(dtype), torch.ones(num, CODE_SIZE).type(dtype))
+        samples = Variable(samples, requires_grad=False)
+        sampled_root_codes_list = torch.chunk(samples, num, dim=0)
+        leaf_codes_reversed = self.decoder_rvnn(sampled_root_codes_list)
+        leaf_codes = [list(reversed(x)) for x in leaf_codes_reversed]
+
+        decoded_len_logits = self.decode_lengths(leaf_codes)
+        length_softmax = nn.functional.softmax(decoded_len_logits, dim=1)
+        vals, indices = torch.max(length_softmax, dim=1)
+        num_esc_by_batch = [len(x) for x in leaf_codes]
+        esc_lengths_organized = []
+        start = 0
+        for n in num_esc_by_batch:
+            esc_lengths_organized.append(indices[start:start+n].data.cpu().numpy())
+            start = start + n
+
+        # analogous to the thing i called batch_ESC
+        esc_ends = [set(np.cumsum(elt) - 1) for elt in esc_lengths_organized]
+        time_lengths = np.array([np.sum(x) for x in esc_lengths_organized])
+
+        return self.decoder_rnn(leaf_codes, time_lengths, esc_ends)
 
     def fake_generate(self, leaf_codes):
         pdb.set_trace()
